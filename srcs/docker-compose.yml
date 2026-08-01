@@ -51,6 +51,13 @@ services:
     networks:
       - inception
 
+  static_site:
+    build: ./requirements/bonus/static_site
+    container_name: static
+    networks:
+      - inception
+    restart: always
+
   nginx:
     build: requirements/nginx
     image: nginx
