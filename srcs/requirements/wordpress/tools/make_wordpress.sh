@@ -37,6 +37,18 @@ if [ ! -f /var/www/wordpress/wp-config.php ]; then
 
     # Create User 2 (Author)
     wp user create author author@42.fr --role=author --user_pass="$DB_PASS" --allow-root
+	echo "[Redis] Configuring Object Cache..."
+
+    # Force WordPress to use direct file access
+    wp config set FS_METHOD direct --type=constant --allow-root
+
+    # Configure Redis host and port
+    wp config set WP_REDIS_HOST redis --allow-root
+    wp config set WP_REDIS_PORT 6379 --raw --allow-root
+
+    # Install and enable plugin
+    wp plugin install redis-cache --activate --allow-root
+    wp redis enable --allow-root
 fi
 
 # Start PHP-FPM
