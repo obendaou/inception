@@ -58,6 +58,21 @@ services:
     networks:
       - inception
 
+
+  ftp:
+    build: ./requirements/bonus/ftp
+    container_name: ftp
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "21:21"
+      - "21000-21010:21000-21010"
+    networks:
+      - inception
+    volumes:
+      - wp_data:/var/www/html
+
   static_site:
     build: ./requirements/bonus/static_site
     container_name: static
