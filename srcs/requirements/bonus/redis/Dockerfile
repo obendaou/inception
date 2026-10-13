@@ -1,8 +1,11 @@
-FROM debian:bullseye
 
-RUN apt update && apt install redis-server -y
+FROM debian:bookworm
 
-COPY ./conf/redis.conf /etc/redis/redis.conf
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends redis-server \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY conf/redis.conf /etc/redis/redis.conf
 
 EXPOSE 6379
 
