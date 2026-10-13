@@ -1,47 +1,138 @@
+
 #!/bin/bash
-set -e
+set -Eeuo pipefail
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
-
-DIR="/var/lib/mysql/${SQL_DATABASE}"
 DATADIR="/var/lib/mysql"
+SOCKET="/run/mysqld/mysqld.sock"
 
-if [ -d "$DIR" ]; then
-    echo -e "${GREEN}Database already initialized!${NC}"
-else
-    echo -e "${RED}Database not initialized. Initializing now...${NC}"
+# Read passwords from Docker secrets.
+SQL_PASSWORD="$(cat /run/secrets/db_password)"
+SQL_ROOT_PASSWORD="$(cat /run/secrets/db_root_password)"
 
-    echo -e "${GREEN}Installing MariaDB system tables...${NC}"
-    mariadb-install-db --user=mysql --datadir="${DATADIR}" > /dev/null
+# Validate required configuration.
+: "${SQL_DATABASE:?SQL_DATABASE is required}"
+: "${SQL_USER:?SQL_USER is required}"
 
-    # Start mysqld with auth checks disabled, network closed —
-    # this is what lets root log in with no password errors.
-    mysqld_safe --skip-networking --skip-grant-tables --user=mysql &
-
-    # Wait until the server actually accepts connections
-    until mysqladmin ping --silent 2>/dev/null; do
-        echo -e "${YELLOW}Waiting for MariaDB to start...${NC}"
-        sleep 1
-    done
-    echo -e "${GREEN}Database server is ready!${NC}"
-
-    # All setup SQL inline — no .sql file needed
-    mysql -u root <<-EOSQL
-        FLUSH PRIVILEGES;
-        ALTER USER 'root'@'localhost' IDENTIFIED BY '${SQL_ROOT_PASSWORD}';
-        CREATE DATABASE IF NOT EXISTS \`${SQL_DATABASE}\`;
-        CREATE USER IF NOT EXISTS '${SQL_USER}'@'%' IDENTIFIED BY '${SQL_PASSWORD}';
-        GRANT ALL PRIVILEGES ON \`${SQL_DATABASE}\`.* TO '${SQL_USER}'@'%';
-        FLUSH PRIVILEGES;
-EOSQL
-
-    echo -e "${GREEN}Shutting down bootstrap instance...${NC}"
-    mysqladmin -u root -p"${SQL_ROOT_PASSWORD}" shutdown
+# Restrict database and user names to safe characters.
+if [[ ! "$SQL_DATABASE" =~ ^[a-zA-Z0-9_]+$ ]] ||
+   [[ ! "$SQL_USER" =~ ^[a-zA-Z0-9_]+$ ]]; then
+    echo "Error: Invalid database or username" >&2
+    exit 1
 fi
 
-# Use exec so mysqld_safe/mysqld becomes PID 1
-exec mysqld_safe --user=mysql
+# Reject empty passwords.
+if [[ -z "$SQL_PASSWORD" || -z "$SQL_ROOT_PASSWORD" ]]; then
+    echo "Error: Database passwords cannot be empty" >&2
+    exit 1
+fi
+
+# Escape values used in SQL string literals.
+escape_sql_string() {
+    local value="$1"
+    value="${value//\\/\\\\}"
+    value="${value//\'/\'\'}"
+    printf '%s' "$value"
+}
+
+DB_PASSWORD_SQL="$(escape_sql_string "$SQL_PASSWORD")"
+ROOT_PASSWORD_SQL="$(escape_sql_string "$SQL_ROOT_PASSWORD")"
+
+mkdir -p /run/mysqld
+chown mysql:mysql /run/mysqld
+
+# Stop the temporary database if initialization fails.
+BOOTSTRAP_PID=""
+
+cleanup() {
+    if [[ -n "$BOOTSTRAP_PID" ]] && kill -0 "$BOOTSTRAP_PID" 2>/dev/null; then
+        mysqladmin --protocol=socket \
+            --socket="$SOCKET" -u root shutdown 2>/dev/null || true
+        kill "$BOOTSTRAP_PID" 2>/dev/null || true
+        wait "$BOOTSTRAP_PID" 2>/dev/null || true
+    fi
+}
+
+trap cleanup EXIT
+
+# Initialize MariaDB system tables only if needed.
+if [[ ! -d "$DATADIR/mysql" ]]; then
+    echo "Initializing MariaDB system tables..."
+
+    mariadb-install-db \
+        --user=mysql \
+        --datadir="$DATADIR"
+fi
+
+# Start a temporary local-only server for configuration.
+echo "Starting temporary MariaDB server..."
+
+mysqld --user=mysql \
+    --datadir="$DATADIR" \
+    --socket="$SOCKET" \
+    --skip-networking &
+
+BOOTSTRAP_PID=$!
+
+# Wait for MariaDB to become ready.
+READY=0
+
+for i in $(seq 1 60); do
+    if mysql --protocol=socket \
+        --socket="$SOCKET" -u root \
+        -e "SELECT 1" >/dev/null 2>&1; then
+        READY=1
+        break
+    fi
+
+    if ! kill -0 "$BOOTSTRAP_PID" 2>/dev/null; then
+        echo "Error: MariaDB stopped during startup" >&2
+        exit 1
+    fi
+
+    sleep 1
+done
+
+if [[ "$READY" -ne 1 ]]; then
+    echo "Error: MariaDB did not become ready" >&2
+    exit 1
+fi
+
+echo "Configuring database and user..."
+
+# Configure the application database and credentials.
+mysql --protocol=socket --socket="$SOCKET" -u root <<EOSQL
+CREATE DATABASE IF NOT EXISTS \`${SQL_DATABASE}\`;
+
+CREATE USER IF NOT EXISTS '${SQL_USER}'@'%'
+IDENTIFIED BY '${DB_PASSWORD_SQL}';
+
+ALTER USER '${SQL_USER}'@'%'
+IDENTIFIED BY '${DB_PASSWORD_SQL}';
+
+GRANT ALL PRIVILEGES ON \`${SQL_DATABASE}\`.*
+TO '${SQL_USER}'@'%';
+
+ALTER USER 'root'@'localhost'
+IDENTIFIED BY '${ROOT_PASSWORD_SQL}';
+
+FLUSH PRIVILEGES;
+EOSQL
+
+echo "Stopping temporary MariaDB server..."
+
+mysqladmin --protocol=socket \
+    --socket="$SOCKET" \
+    -u root \
+    -p"$SQL_ROOT_PASSWORD" \
+    shutdown
+
+wait "$BOOTSTRAP_PID" || true
+BOOTSTRAP_PID=""
+trap - EXIT
+
+echo "Starting MariaDB..."
+
+# Run the database server as the container's main process.
+exec mysqld --user=mysql \
+    --datadir="$DATADIR" \
+    --socket="$SOCKET"
