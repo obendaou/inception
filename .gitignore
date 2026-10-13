@@ -1,0 +1,7 @@
+# Credentials
+secrets/
+srcs/.env
+
+# Local and generated data
+.DS_Store
+*.log
