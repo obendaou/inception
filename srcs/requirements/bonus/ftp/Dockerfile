@@ -1,20 +1,27 @@
-FROM debian:bullseye
 
-# Install the Very Secure FTP Daemon
-RUN apt update && apt-get install -y vsftpd
+FROM debian:bookworm
 
-# Create the empty directory required by vsftpd for secure chrooting
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       vsftpd \
+       ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN mkdir -p /var/run/vsftpd/empty
 
-# Copy the configuration file
 COPY conf/vsftpd.conf /etc/vsftpd.conf
-
-# Copy and grant execution rights to the setup script
 COPY tools/setup.sh /usr/local/bin/setup.sh
+
 RUN chmod +x /usr/local/bin/setup.sh
 
-# Expose Port 21 (Control Channel) and Ports 21000-21010 (Passive Data Channel)
+RUN openssl req -x509 -nodes \
+    -newkey rsa:2048 \
+    -days 365 \
+    -keyout /etc/ssl/private/vsftpd.key \
+    -out /etc/ssl/private/vsftpd.crt \
+    -subj "/CN=obendaou.42.fr" \
+    && chmod 600 /etc/ssl/private/vsftpd.key
+
 EXPOSE 21 21000-21010
 
-# Execute the setup script as PID 1
 CMD ["/usr/local/bin/setup.sh"]
