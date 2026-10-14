@@ -17,6 +17,7 @@ if [ ! -f /var/www/wordpress/wp-config.php ]; then
     # Read secrets directly from files
     DB_PASS=$(cat /run/secrets/db_password)
     WP_ADMIN_PASS=$(cat /run/secrets/wp_admin_password)
+    WP_AUTHOR_PASS="$(cat /run/secrets/wp_author_password)"
     #ADMIN_PASS=$(cat /run/secrets/db_root_password.txt)
 
     wp config create \
@@ -37,7 +38,7 @@ if [ ! -f /var/www/wordpress/wp-config.php ]; then
         --allow-root
 
     # Create User 2 (Author)
-    wp user create author author@42.fr --role=author --user_pass="$DB_PASS" --allow-root
+    wp user create author author@42.fr --role=author --user_pass="$WP_AUTHOR_PASS" --allow-root
 	echo "[Redis] Configuring Object Cache..."
 
     # Force WordPress to use direct file access
