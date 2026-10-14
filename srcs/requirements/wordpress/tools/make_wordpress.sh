@@ -16,6 +16,7 @@ if [ ! -f /var/www/wordpress/wp-config.php ]; then
 
     # Read secrets directly from files
     DB_PASS=$(cat /run/secrets/db_password)
+    WP_ADMIN_PASS=$(cat /run/secrets/wp_admin_password)
     #ADMIN_PASS=$(cat /run/secrets/db_root_password.txt)
 
     wp config create \
@@ -30,7 +31,7 @@ if [ ! -f /var/www/wordpress/wp-config.php ]; then
         --url="$DOMAIN_NAME" \
         --title="Inception" \
         --admin_user="$SQL_USER" \
-        --admin_password="$SQL_ROOT_PASSWORD" \
+        --admin_password="$WP_ADMIN_PASS" \
         --admin_email="admin@student.42.fr" \
       	--skip-email \
         --allow-root
