@@ -1,15 +1,21 @@
-FROM debian:bullseye
+FROM debian:bookworm
 
-RUN apt update && apt install -y \
-    php7.4-cli \
-    php7.4-mysql \
-    wget 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       php8.2-cli \
+       php8.2-mysql \
+       php8.2-mbstring \
+       wget \
+       ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /var/www/html
 
-RUN wget https://github.com/vrana/adminer/releases/download/v4.8.1/adminer-4.8.1.php -O index.php
+RUN wget -q \
+    https://github.com/vrana/adminer/releases/download/v4.8.1/adminer-4.8.1.php \
+    -O index.php \
+    && test -s index.php
 
 EXPOSE 8080
 
-# Start PHP's built-in lightweight development server
 CMD ["php", "-S", "0.0.0.0:8080", "-t", "/var/www/html"]
