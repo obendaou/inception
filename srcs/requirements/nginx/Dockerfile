@@ -1,24 +1,28 @@
-FROM debian:bullseye
+FROM debian:bookworm
 
-# Install NGINX and OpenSSL
-RUN apt-get update && apt-get install -y nginx openssl
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       nginx \
+       openssl \
+       ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-# Create SSL directory
+# Create SSL certificate directory
 RUN mkdir -p /etc/nginx/ssl
 
-# Generate Self-Signed Certificate
-# req -x509: Create self-signed cert
-# -nodes: No password for the key
-# -days 365: Valid for a year
-# -newkey rsa:2048: Generate a new 2048-bit RSA key
-RUN openssl req -x509 -nodes -out /etc/nginx/ssl/inception.crt -keyout /etc/nginx/ssl/inception.key -subj "/C=FR/ST=IDF/L=Paris/O=42/OU=42/CN=obendaou.42.fr/UID=obendaou"
+# Generate a self-signed TLS certificate for local development
+RUN openssl req -x509 -nodes \
+    -newkey rsa:2048 \
+    -days 365 \
+    -keyout /etc/nginx/ssl/inception.key \
+    -out /etc/nginx/ssl/inception.crt \
+    -subj "/C=MA/ST=Marrakech/L=Marrakech/O=42/OU=1337/CN=obendaou.42.fr" \
+    && chmod 600 /etc/nginx/ssl/inception.key
 
-# Copy custom configuration
+# Copy Nginx configuration
 COPY conf/nginx.conf /etc/nginx/conf.d/default.conf
 
-# Permissions
-RUN chmod 755 /var/www/html
-RUN chown -R www-data:www-data /var/www/html
+EXPOSE 443
 
-# Start NGINX in foreground
+# Keep Nginx running as the container's main process
 CMD ["nginx", "-g", "daemon off;"]
