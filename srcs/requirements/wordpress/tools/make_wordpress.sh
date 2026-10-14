@@ -18,7 +18,6 @@ if [ ! -f /var/www/wordpress/wp-config.php ]; then
     DB_PASS=$(cat /run/secrets/db_password)
     WP_ADMIN_PASS=$(cat /run/secrets/wp_admin_password)
     WP_AUTHOR_PASS="$(cat /run/secrets/wp_author_password)"
-    #ADMIN_PASS=$(cat /run/secrets/db_root_password.txt)
 
     wp config create \
         --dbname="$SQL_DATABASE" \
@@ -27,6 +26,16 @@ if [ ! -f /var/www/wordpress/wp-config.php ]; then
         --dbhost="$SQL_HOST" \
         --allow-root
 
+    # Wait until MariaDB accepts authenticated connections.
+    echo "Waiting for MariaDB..."
+
+    until MYSQL_PWD="$DB_PASS" mariadb \
+        -h "$SQL_HOST" \
+        -u "$SQL_USER" \
+        "$SQL_DATABASE" \
+        -e "SELECT 1" >/dev/null 2>&1; do
+        sleep 2
+    done
     # Install WordPress
     wp core install \
         --url="$DOMAIN_NAME" \
