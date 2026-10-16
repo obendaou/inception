@@ -1,16 +1,18 @@
-FROM debian:bullseye
+FROM debian:bookworm
 
-RUN apt update && apt install nginx -y
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends nginx \
+    && rm -rf /var/lib/apt/lists/*
 
-# Create directory and set permissions
-RUN mkdir -p /var/www/html && chown -R www-data:www-data /var/www/html
+# Remove the default Nginx website
+RUN rm -f /etc/nginx/sites-enabled/default
 
-# DELETE the default Debian configuration to avoid port 80 conflicts
-RUN rm /etc/nginx/sites-enabled/default
-
-# Now copy your custom server block in
-COPY conf/nginx.conf /etc/nginx/conf.d/test.conf
+# Copy custom configuration and website
+COPY conf/nginx.conf /etc/nginx/conf.d/static.conf
 COPY tools/index.html /var/www/html/index.html
+
+# Ensure files are readable by Nginx
+RUN chmod 644 /var/www/html/index.html
 
 EXPOSE 80
 
