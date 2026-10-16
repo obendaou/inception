@@ -70,8 +70,8 @@ services:
     secrets:
       - ftp_password
     ports:
-      - "21:21"
-      - "21000-21010:21000-21010"
+      - "127.0.0.1:21:21"
+      - "127.0.0.1:21000-21010:21000-21010"
     networks:
       - inception
     volumes:
