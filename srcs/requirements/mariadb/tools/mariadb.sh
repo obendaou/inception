@@ -1,8 +1,9 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -Eeuo pipefail
 
 DATADIR="/var/lib/mysql"
 SOCKET="/run/mysqld/mysqld.sock"
+MARKER="$DATADIR/.inception-init-complete"
 
 SQL_PASSWORD="$(cat /run/secrets/db_password)"
 SQL_ROOT_PASSWORD="$(cat /run/secrets/db_root_password)"
@@ -12,60 +13,46 @@ SQL_ROOT_PASSWORD="$(cat /run/secrets/db_root_password)"
 
 if [[ ! "$SQL_DATABASE" =~ ^[a-zA-Z0-9_]+$ ]] ||
    [[ ! "$SQL_USER" =~ ^[a-zA-Z0-9_]+$ ]]; then
-    echo "Error: Invalid database or username" >&2
+    echo "Invalid database name or username" >&2
     exit 1
 fi
 
 if [[ -z "$SQL_PASSWORD" || -z "$SQL_ROOT_PASSWORD" ]]; then
-    echo "Error: Database passwords cannot be empty" >&2
+    echo "Database passwords cannot be empty" >&2
     exit 1
 fi
 
-escape_sql_string() {
+escape_sql() {
     local value="$1"
     value="${value//\\/\\\\}"
     value="${value//\'/\'\'}"
     printf '%s' "$value"
 }
 
-DB_PASSWORD_SQL="$(escape_sql_string "$SQL_PASSWORD")"
-ROOT_PASSWORD_SQL="$(escape_sql_string "$SQL_ROOT_PASSWORD")"
+DB_PASS_SQL="$(escape_sql "$SQL_PASSWORD")"
+ROOT_PASS_SQL="$(escape_sql "$SQL_ROOT_PASSWORD")"
 
 mkdir -p /run/mysqld
 chown mysql:mysql /run/mysqld
 
-# An existing database must be started without reinitialization.
-if [[ -d "$DATADIR/mysql" ]]; then
-    echo "Existing MariaDB database found."
-    echo "Starting MariaDB..."
+# Initialize MariaDB system tables only when missing.
+if [[ ! -d "$DATADIR/mysql" ]]; then
+    echo "Initializing MariaDB system tables..."
+
+    mariadb-install-db \
+        --user=mysql \
+        --datadir="$DATADIR"
+fi
+
+# Only skip application setup when it completed previously.
+if [[ -f "$MARKER" ]]; then
+    echo "MariaDB initialization already completed."
 
     exec mysqld \
         --user=mysql \
         --datadir="$DATADIR" \
         --socket="$SOCKET"
 fi
-
-echo "Initializing MariaDB for the first time..."
-
-mariadb-install-db \
-    --user=mysql \
-    --datadir="$DATADIR"
-
-BOOTSTRAP_PID=""
-
-cleanup() {
-    if [[ -n "$BOOTSTRAP_PID" ]] &&
-       kill -0 "$BOOTSTRAP_PID" 2>/dev/null; then
-        mysqladmin --protocol=socket \
-            --socket="$SOCKET" \
-            -u root shutdown 2>/dev/null || true
-
-        kill "$BOOTSTRAP_PID" 2>/dev/null || true
-        wait "$BOOTSTRAP_PID" 2>/dev/null || true
-    fi
-}
-
-trap cleanup EXIT
 
 echo "Starting temporary MariaDB server..."
 
@@ -77,62 +64,85 @@ mysqld \
 
 BOOTSTRAP_PID=$!
 
-READY=0
+cleanup() {
+    if kill -0 "$BOOTSTRAP_PID" 2>/dev/null; then
+        kill "$BOOTSTRAP_PID" 2>/dev/null || true
+        wait "$BOOTSTRAP_PID" 2>/dev/null || true
+    fi
+}
 
-for i in $(seq 1 60); do
-    if mysql --protocol=socket \
-        --socket="$SOCKET" \
-        -u root \
-        -e "SELECT 1" >/dev/null 2>&1; then
-        READY=1
+trap cleanup EXIT
+
+# Support both existing password-protected root accounts
+# and first-time installations with socket authentication.
+ROOT_MODE=""
+
+for attempt in $(seq 1 60); do
+    if MYSQL_PWD="$SQL_ROOT_PASSWORD" \
+       mariadb --protocol=socket --socket="$SOCKET" \
+       -u root -e "SELECT 1" >/dev/null 2>&1; then
+        ROOT_MODE="password"
+        break
+    fi
+
+    if mariadb --protocol=socket --socket="$SOCKET" \
+       -u root -e "SELECT 1" >/dev/null 2>&1; then
+        ROOT_MODE="socket"
         break
     fi
 
     if ! kill -0 "$BOOTSTRAP_PID" 2>/dev/null; then
-        echo "Error: MariaDB stopped during initialization" >&2
+        echo "MariaDB stopped during initialization" >&2
         exit 1
     fi
 
     sleep 1
 done
 
-if [[ "$READY" -ne 1 ]]; then
-    echo "Error: MariaDB did not become ready" >&2
+if [[ -z "$ROOT_MODE" ]]; then
+    echo "Could not authenticate as MariaDB root" >&2
     exit 1
 fi
 
-echo "Creating application database and users..."
+echo "Configuring application database and user..."
 
-mysql --protocol=socket --socket="$SOCKET" -u root <<EOSQL
+if [[ "$ROOT_MODE" == "password" ]]; then
+    export MYSQL_PWD="$SQL_ROOT_PASSWORD"
+fi
+
+mariadb --protocol=socket --socket="$SOCKET" -u root <<EOSQL
 CREATE DATABASE IF NOT EXISTS \`${SQL_DATABASE}\`;
 
 CREATE USER IF NOT EXISTS '${SQL_USER}'@'%'
-IDENTIFIED BY '${DB_PASSWORD_SQL}';
+IDENTIFIED BY '${DB_PASS_SQL}';
 
 ALTER USER '${SQL_USER}'@'%'
-IDENTIFIED BY '${DB_PASSWORD_SQL}';
+IDENTIFIED BY '${DB_PASS_SQL}';
 
 GRANT ALL PRIVILEGES ON \`${SQL_DATABASE}\`.*
 TO '${SQL_USER}'@'%';
 
 ALTER USER 'root'@'localhost'
-IDENTIFIED BY '${ROOT_PASSWORD_SQL}';
+IDENTIFIED BY '${ROOT_PASS_SQL}';
 
 FLUSH PRIVILEGES;
 EOSQL
 
-echo "Stopping temporary MariaDB server..."
+unset MYSQL_PWD || true
+
+echo "Application database initialization succeeded."
 
 MYSQL_PWD="$SQL_ROOT_PASSWORD" \
-mysqladmin --protocol=socket \
-    --socket="$SOCKET" \
+mariadb-admin --protocol=socket --socket="$SOCKET" \
     -u root shutdown
 
-wait "$BOOTSTRAP_PID" || true
-BOOTSTRAP_PID=""
+wait "$BOOTSTRAP_PID"
 trap - EXIT
 
-echo "Starting MariaDB..."
+# Create marker only after successful initialization and shutdown.
+touch "$MARKER"
+
+echo "Starting MariaDB normally..."
 
 exec mysqld \
     --user=mysql \
