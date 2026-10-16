@@ -46,7 +46,7 @@ The `depends_on` settings control container startup order, **not database readin
 
 **Containers vs VMs.** Containers share the Linux kernel of their Docker host, while VMs run guest operating systems. On macOS this project runs Linux containers inside a Docker-compatible Linux VM (for example, Colima).
 
-**Network isolation.** MariaDB, Redis, PHP-FPM, and the bonus web applications have no direct host port mappings. Nginx is the HTTPS gateway. FTP is explicitly bound to `127.0.0.1`, so it is not reachable through other host network interfaces by default.
+**Network isolation.** MariaDB, Redis, PHP-FPM, and the bonus web applications have no direct host port mappings. Nginx is the HTTPS gateway. FTP is explicitly bound to `127.0.0.1`, so it is not reachable through other host network interfaces by default. Its vsftpd configuration also requires TLS for authenticated sessions and data transfers.
 
 **Persistence.** Compose declares named volumes `db_data` and `wp_data`, but each uses the `local` driver with a **bind mount** pointing into `DATA_DIR`. Database and WordPress data therefore persist in host directories at `${DATA_DIR}/mariadb` and `${DATA_DIR}/wordpress`. Removing containers does not delete those host directories.
 
@@ -194,7 +194,7 @@ docker exec mariadb test -f /var/lib/mysql/.inception-init-complete
 
 - Nginx terminates TLS 1.2/1.3; the certificate is self-signed.
 - Adminer and cAdvisor are accessible through password-protected Nginx routes, but access to them should remain restricted to trusted environments.
-- FTP is limited to loopback at the host; **plain FTP is not encrypted**. Avoid transmitting sensitive data over untrusted networks.
+- FTP is limited to loopback at the host; the vsftpd configuration **requires TLS for local logins and data transfers (FTPS)** with a self-signed certificate. Verify certificate trust and client TLS mode; do not silently fall back to unencrypted FTP.
 - Local Compose secrets and host bind mounts must be protected by host filesystem permissions and appropriate backups.
 - cAdvisor reads host/container runtime information through mounted paths; this provides substantial visibility into the Docker host. Review its privileges before running on shared machines.
 - Initialization markers protect against repeated setup but are not database integrity checks or backup mechanisms.
