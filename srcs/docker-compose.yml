@@ -91,6 +91,8 @@ services:
     restart: always
     ports:
       - "443:443"
+    secrets:
+      - admin_tools_htpasswd
     depends_on:
       - wordpress
     volumes:
@@ -127,3 +129,5 @@ secrets:
     file: ../secrets/wp_author_password.txt
   ftp_password:
     file: ../secrets/ftp_password.txt
+  admin_tools_htpasswd:
+    file: ../secrets/nginx.htpasswd
