@@ -1,27 +1,45 @@
-name = inception
+NAME = inception
+
+COMPOSE = docker-compose -f srcs/docker-compose.yml --env-file srcs/.env
+
+.DEFAULT_GOAL := all
+
 all:
-	@printf "Launch configuration ${name}...\n"
-	@bash srcs/requirements/tools/make_dir.sh
-	@docker-compose -f ./srcs/docker-compose.yml --env-file srcs/.env up -d --build
+	@printf "Starting $(NAME)...\n"
+	@set -a; . ./srcs/.env; set +a; \
+		bash srcs/requirements/tools/make_dir.sh
+	@$(COMPOSE) up -d --build
+
+up: all
 
 down:
-	@printf "Stopping configuration ${name}...\n"
-	@docker-compose -f ./srcs/docker-compose.yml down
+	@printf "Stopping $(NAME)...\n"
+	@$(COMPOSE) down
+
+stop:
+	@$(COMPOSE) stop
+
+start:
+	@$(COMPOSE) start
+
+restart:
+	@$(COMPOSE) restart
 
 re: down all
 
+logs:
+	@$(COMPOSE) logs --tail=100
+
+ps:
+	@$(COMPOSE) ps
+
 clean: down
-	@printf "Cleaning configuration ${name}...\n"
-	@docker system prune -a
+	@printf "Removing project containers and images...\n"
+	@$(COMPOSE) down --rmi local --remove-orphans
 
-fclean: clean
-	@printf "Total clean of all configurations docker\n"
-	@docker stop $$(docker ps -qa) 2>/dev/null || true
-	@docker rm $$(docker ps -qa) 2>/dev/null || true
-	@docker rmi -f $$(docker images -qa) 2>/dev/null || true
-	@docker volume rm $$(docker volume ls -q) 2>/dev/null || true
-	@docker network rm $$(docker network ls -q) 2>/dev/null || true
-	@sudo rm -rf /home/obendaou/data/wordpress
-	@sudo rm -rf /home/obendaou/data/mariadb
+fclean:
+	@printf "WARNING: Removing $(NAME) containers and Docker volumes.\n"
+	@printf "Host bind-mounted data directories are not deleted.\n"
+	@$(COMPOSE) down --rmi local --volumes --remove-orphans
 
-.PHONY: all down re clean fclean
+.PHONY: all up down stop start restart re logs ps clean fclean
