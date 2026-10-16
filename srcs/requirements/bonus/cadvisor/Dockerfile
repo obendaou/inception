@@ -1,12 +1,24 @@
-FROM debian:bullseye
+FROM debian:bookworm
 
-RUN apt-get update && apt-get install -y \
-    wget 
+ARG TARGETARCH
 
-# The URL here has been updated to use "cadvisor-v0.47.0-linux-amd64"
-RUN wget https://github.com/google/cadvisor/releases/download/v0.47.0/cadvisor-v0.47.0-linux-amd64 -O /usr/bin/cadvisor \
-    && chmod +x /usr/bin/cadvisor
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       ca-certificates \
+       wget \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+    arch="${TARGETARCH:-$(dpkg --print-architecture)}"; \
+    case "$arch" in \
+      amd64|arm64) ;; \
+      *) echo "Unsupported architecture: $arch"; exit 1 ;; \
+    esac; \
+    wget -q \
+      "https://github.com/google/cadvisor/releases/download/v0.54.0/cadvisor-v0.54.0-linux-${arch}" \
+      -O /usr/local/bin/cadvisor; \
+    chmod 755 /usr/local/bin/cadvisor
 
 EXPOSE 8080
 
-CMD ["/usr/bin/cadvisor", "-logtostderr", "--url_base_prefix=/cadvisor"]
+CMD ["/usr/local/bin/cadvisor", "-logtostderr", "--url_base_prefix=/cadvisor"]
